@@ -15,6 +15,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             reason: "Background network monitoring"
         )
     }
+
+    func applicationShouldTerminateAfterLastWindowIsClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
 }
 
 @main
