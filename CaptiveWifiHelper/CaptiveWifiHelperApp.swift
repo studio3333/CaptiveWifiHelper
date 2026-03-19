@@ -1,13 +1,16 @@
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var activity: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 自動終了を無効化
         ProcessInfo.processInfo.automaticTerminationSupportEnabled = false
         // 突然の終了を無効化
         ProcessInfo.processInfo.disableSuddenTermination()
         // App Nap を無効化（バックグラウンドネットワーク監視のため）
-        ProcessInfo.processInfo.beginActivity(
+        // 戻り値を保持しないとトークンが即座に解放され、アサーションが無効になる
+        activity = ProcessInfo.processInfo.beginActivity(
             options: .userInitiated,
             reason: "Background network monitoring"
         )
