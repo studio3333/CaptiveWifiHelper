@@ -9,6 +9,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let model = ConnectivityModel()
     private var cancellable: AnyCancellable?
+    /// ユーザーが明示的に Quit を選択したかどうか
+    private var userRequestedQuit = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 自動終了を無効化
@@ -16,9 +18,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         ProcessInfo.processInfo.disableAutomaticTermination("CaptiveWifiHelper must run continuously")
         ProcessInfo.processInfo.disableSuddenTermination()
         activity = ProcessInfo.processInfo.beginActivity(
-            options: .userInitiated,
+            options: [.userInitiated, .suddenTerminationDisabled, .automaticTerminationDisabled, .idleSystemSleepDisabled],
             reason: "Background network monitoring"
         )
+
+        // スリープ/ウェイク通知を監視してログに記録
+        let wsnc = NSWorkspace.shared.notificationCenter
+        wsnc.addObserver(self, selector: #selector(systemWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(systemDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(sessionDidResignActive), name: NSWorkspace.sessionDidResignActiveNotification, object: nil)
+        wsnc.addObserver(self, selector: #selector(sessionDidBecomeActive), name: NSWorkspace.sessionDidBecomeActiveNotification, object: nil)
+
+        // SIGTERM ハンドラを設定（OS によるプロセス終了の検知）
+        signal(SIGTERM) { _ in
+            let emergencyLogger = Logger(subsystem: "com.totsuji.CaptiveWifiHelper", category: "lifecycle")
+            emergencyLogger.error("SIGTERM received — process is being killed by the system")
+        }
 
         // メニューバーアイテムを作成
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -35,12 +50,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        logger.error("applicationWillTerminate called — app is being terminated")
+        logger.error("applicationWillTerminate called — app is being terminated (userRequestedQuit=\(self.userRequestedQuit))")
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        logger.error("applicationShouldTerminate called")
-        return .terminateNow
+        if userRequestedQuit {
+            logger.info("applicationShouldTerminate: user requested quit — allowing termination")
+            return .terminateNow
+        }
+        // OS やシステムからの終了要求は拒否する
+        logger.error("applicationShouldTerminate: system-initiated termination DENIED")
+        return .terminateCancel
+    }
+
+    // MARK: - Sleep / Wake logging
+
+    @objc private func systemWillSleep(_ note: Notification) {
+        logger.info("System is going to sleep")
+    }
+
+    @objc private func systemDidWake(_ note: Notification) {
+        logger.info("System woke from sleep")
+        model.checkNow()
+    }
+
+    @objc private func sessionDidResignActive(_ note: Notification) {
+        logger.info("Session resigned active (fast user switching or screen locked)")
+    }
+
+    @objc private func sessionDidBecomeActive(_ note: Notification) {
+        logger.info("Session became active again")
     }
 
     func applicationShouldTerminateAfterLastWindowIsClosed(_ sender: NSApplication) -> Bool {
@@ -126,6 +165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
+        userRequestedQuit = true
         NSApp.terminate(nil)
     }
 }
